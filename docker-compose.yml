@@ -1,0 +1,16 @@
+# PointsBot development environment
+# Mounts the custom component directly into HA config for live editing.
+# No card-builder service — Phase 2 (frontend) is not yet implemented.
+services:
+  homeassistant:
+    container_name: homeassistant-pointsbot-dev
+    image: homeassistant/home-assistant:dev
+    volumes:
+      - ./dev-config:/config
+      - ./custom_components/pointsbot:/config/custom_components/pointsbot
+    ports:
+      - "8123:8123"
+    restart: unless-stopped
+    user: "1000:1000"
+    environment:
+      - DISABLE_IPV6=true

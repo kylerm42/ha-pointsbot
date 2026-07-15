@@ -1,0 +1,328 @@
+sync_people:
+  name: Sync People
+  description: >
+    Re-synchronize all Home Assistant person.* entities into PointsBot user profiles.
+    Creates a profile (weekly allotment = 0) for any person not yet known to PointsBot.
+    Existing profiles are never modified or deleted — this is an additive upsert only.
+    Run this after adding a new family member to Home Assistant.
+
+adjust_points:
+  name: Adjust Points
+  description: >
+    Apply a signed point adjustment to a person's current week's points.
+    Use positive values to award points and negative values to deduct them.
+    The adjustment is recorded permanently in the point history and appears in
+    the person's weekly adjustments list until the next Monday rollover.
+    A non-zero amount and a non-empty reason are both required.
+  fields:
+    person_id:
+      name: Person ID
+      description: >
+        The entity ID of the Home Assistant person to adjust
+        (e.g. "person.kyle" or "person.alice_smith").
+        Must match an existing PointsBot profile — run sync_people first if needed.
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    amount:
+      name: Amount
+      description: >
+        Signed integer point delta to apply immediately to this week's points.
+        Use a positive number to award points (e.g. 10) or a negative number to
+        deduct them (e.g. -5). Zero is not allowed.
+      required: true
+      example: -5
+      selector:
+        number:
+          min: -9999
+          max: 9999
+          step: 1
+          mode: box
+    reason:
+      name: Reason
+      description: >
+        A brief, human-readable explanation for this adjustment.
+        This is recorded permanently in the history log and shown on the dashboard
+        card for the current week — make it descriptive enough to understand later
+        (e.g. "Left dirty dishes in the sink").
+      required: true
+      example: Left dirty dishes in the sink
+      selector:
+        text:
+
+set_weekly_allotment:
+  name: Set Weekly Allotment
+  description: >
+    Set the number of points automatically granted to a person at the start of
+    each week (during the Monday rollover). The allotment replaces the previous
+    week's points rather than adding to them. Use 0 to opt a person out of the
+    automatic weekly grant entirely. This change takes effect at the next rollover —
+    current-week points are not affected.
+  fields:
+    person_id:
+      name: Person ID
+      description: >
+        The entity ID of the Home Assistant person whose weekly allotment to set
+        (e.g. "person.kyle").
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    amount:
+      name: Amount
+      description: >
+        Non-negative integer number of points to grant at the start of each week.
+        Use 0 to disable the automatic allotment for this person.
+      required: true
+      example: 50
+      selector:
+        number:
+          min: 0
+          max: 9999
+          step: 1
+          mode: box
+
+add_task:
+  name: Add Task
+  description: >
+    Add a new task to a person's task list. There are two task types:
+
+    - base: A recurring informational chore (e.g. "Make bed"). Tracked with a
+      done/not-done flag; completing it does not award points. The done flag resets
+      every Monday.
+
+    - bonus: An optional task worth a specified number of points (e.g. "Vacuum living
+      room", 10 pts). Completing it via complete_bonus_task immediately awards the
+      points and records a history entry. Completion count resets every Monday.
+  fields:
+    person_id:
+      name: Person ID
+      description: >
+        The entity ID of the Home Assistant person to add the task to
+        (e.g. "person.kyle").
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    task_type:
+      name: Task Type
+      description: >
+        Whether this is a base task (informational, no points) or a bonus task
+        (completable for points). Must be exactly "base" or "bonus".
+      required: true
+      example: bonus
+      selector:
+        select:
+          options:
+            - base
+            - bonus
+    name:
+      name: Task Name
+      description: >
+        A short, descriptive label for this task shown on the dashboard card
+        (e.g. "Make bed", "Vacuum living room").
+      required: true
+      example: Vacuum living room
+      selector:
+        text:
+    points_value:
+      name: Points Value
+      description: >
+        Number of points awarded when this bonus task is completed. Required when
+        task_type is "bonus"; must not be provided when task_type is "base".
+        Must be a positive integer (minimum 1).
+      required: false
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 9999
+          step: 1
+          mode: box
+
+update_task:
+  name: Update Task
+  description: >
+    Partially update an existing task. At least one of name, points_value, or enabled
+    must be provided. Only fields that are provided are changed — omitted fields are
+    left as-is. Note that points_value and enabled apply to bonus tasks only; supplying
+    them for a base task will return an error.
+  fields:
+    person_id:
+      name: Person ID
+      description: >
+        The entity ID of the Home Assistant person who owns the task
+        (e.g. "person.kyle").
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    task_type:
+      name: Task Type
+      description: >
+        The type of the task being updated — must match the task's actual type.
+        Use "base" for base tasks and "bonus" for bonus tasks.
+      required: true
+      example: bonus
+      selector:
+        select:
+          options:
+            - base
+            - bonus
+    task_id:
+      name: Task ID
+      description: >
+        The UUID of the task to update. Visible in the sensor's bonus_tasks or
+        base_tasks attribute list as the "id" field.
+      required: true
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      selector:
+        text:
+    name:
+      name: New Name
+      description: >
+        Updated display name for the task. Applies to both base and bonus tasks.
+        Leave blank to keep the current name.
+      required: false
+      example: Vacuum living room and hallway
+      selector:
+        text:
+    points_value:
+      name: Points Value
+      description: >
+        Updated point value for a bonus task. Leave blank to keep the current value.
+        Not applicable to base tasks — will return an error if provided for a base task.
+      required: false
+      example: 15
+      selector:
+        number:
+          min: 1
+          max: 9999
+          step: 1
+          mode: box
+    enabled:
+      name: Enabled
+      description: >
+        Set to false to disable a bonus task, preventing it from being completed
+        without deleting its definition or resetting its weekly completion count.
+        Set to true to re-enable it. Not applicable to base tasks.
+      required: false
+      example: false
+      selector:
+        boolean:
+
+delete_task:
+  name: Delete Task
+  description: >
+    Permanently remove a task from a person's task list. This cannot be undone —
+    the task definition is deleted immediately. Historical completion records in the
+    point history log are retained. If you want to temporarily stop a bonus task from
+    being completed without losing its definition, use update_task with enabled: false
+    instead.
+  fields:
+    person_id:
+      name: Person ID
+      description: >
+        The entity ID of the Home Assistant person who owns the task
+        (e.g. "person.kyle").
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    task_type:
+      name: Task Type
+      description: >
+        The type of the task to delete — must match the task's actual type.
+        Use "base" for base tasks and "bonus" for bonus tasks.
+      required: true
+      example: base
+      selector:
+        select:
+          options:
+            - base
+            - bonus
+    task_id:
+      name: Task ID
+      description: >
+        The UUID of the task to delete. Visible in the sensor's bonus_tasks or
+        base_tasks attribute list as the "id" field.
+      required: true
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      selector:
+        text:
+
+toggle_base_task:
+  name: Toggle Base Task
+  description: >
+    Flip the done/not-done state of a base task. If the task is currently marked
+    done, it becomes not-done, and vice versa. This has no effect on points — base
+    tasks are informational checkmarks only. All base task done flags reset every
+    Monday during the weekly rollover.
+  fields:
+    person_id:
+      name: Person ID
+      description: >
+        The entity ID of the Home Assistant person who owns the task
+        (e.g. "person.kyle").
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    task_id:
+      name: Task ID
+      description: >
+        The UUID of the base task to toggle. Visible in the sensor's base_tasks
+        attribute list as the "id" field. Must be a base task, not a bonus task.
+      required: true
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      selector:
+        text:
+
+complete_bonus_task:
+  name: Complete Bonus Task
+  description: >
+    Record a completion of a bonus task. Immediately adds the task's points_value
+    to the person's current week's points and increments the task's weekly
+    completion counter. The completion is also recorded permanently in the point
+    history log with the task name, points awarded, and timestamp.
+    Returns an error if the task is currently disabled — use update_task with
+    enabled: true to re-enable it first.
+  fields:
+    person_id:
+      name: Person ID
+      description: >
+        The entity ID of the Home Assistant person who completed the task
+        (e.g. "person.kyle").
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    task_id:
+      name: Task ID
+      description: >
+        The UUID of the bonus task that was completed. Visible in the sensor's
+        bonus_tasks attribute list as the "id" field. Must be a bonus task, not a
+        base task — use toggle_base_task for base tasks.
+      required: true
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      selector:
+        text:
+
+run_weekly_reset:
+  name: Run Weekly Reset
+  description: >
+    Manually trigger the weekly rollover for all registered persons, exactly as
+    it would run automatically every Monday at midnight. For each person:
+
+    - Current week's points (weekly_points) are added to their lifetime total
+      (total_points).
+    - weekly_points is reset to their weekly_allotment (or 0 if not set).
+    - All base task done flags are reset to false.
+    - All bonus task weekly completion counts are reset to 0.
+    - The current week's manual adjustment list is cleared (the permanent history
+      log is never modified).
+    - A weekly_rollover event is appended to the permanent history log.
+
+    Use this for testing, to recover from a missed Monday rollover, or to manually
+    advance the week during onboarding.
