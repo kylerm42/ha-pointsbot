@@ -1,6 +1,7 @@
 # PointsBot development environment
 # Mounts the custom component directly into HA config for live editing.
-# No card-builder service — Phase 2 (frontend) is not yet implemented.
+# card-builder watches frontend/ (ha-pointsbot-cards submodule) and writes
+# dist/ which is mounted into HA's www/community path (mimics HACS plugin path).
 services:
   homeassistant:
     container_name: homeassistant-pointsbot-dev
@@ -8,9 +9,21 @@ services:
     volumes:
       - ./dev-config:/config
       - ./custom_components/pointsbot:/config/custom_components/pointsbot
+      # Mount cards repo dist to www/community (mimics HACS plugin path)
+      - ./frontend/dist:/config/www/community/pointsbot-cards
     ports:
       - "8123:8123"
     restart: unless-stopped
     user: "1000:1000"
     environment:
       - DISABLE_IPV6=true
+
+  card-builder:
+    container_name: pointsbot-card-builder
+    image: node:20
+    working_dir: /app
+    volumes:
+      # Mount entire cards repo for building
+      - ./frontend:/app
+    command: sh -c "npm install && npm run watch"
+    restart: unless-stopped

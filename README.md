@@ -13,7 +13,7 @@ A Home Assistant custom integration for family points and allowance tracking. Po
 - **Permanent audit log** — every point-affecting event (adjustments, bonus completions, weekly rollovers) is written to an append-only history store that is never trimmed
 - **Per-person sensor entity** — one `sensor.pointsbot_<person_slug>` entity per family member, with all current state in attributes, ready for dashboard cards
 
-> **Note — Dashboard Cards (Phase 2):** No dashboard card component exists yet. Phase 2 (`ha-pointsbot-cards`, a separate repository) will deliver per-person Lovelace cards that consume these sensor entities. In the meantime, the full integration is usable via **Developer Tools → Actions** in the Home Assistant UI, and sensor state is inspectable via **Developer Tools → States**.
+> **Dashboard Cards:** The companion frontend repository [ha-pointsbot-cards](https://github.com/kylerm42/ha-pointsbot-cards) delivers per-person Lovelace cards that consume the `sensor.pointsbot_*` entities produced by this integration. Install it via HACS (Frontend) or manually — see the cards repo README for instructions. The full integration is also usable without cards via **Developer Tools → Actions**.
 
 ---
 

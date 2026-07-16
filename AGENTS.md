@@ -176,9 +176,56 @@ Run tests: `pytest` from the repo root.
 
 ---
 
+## Frontend Submodule (`frontend/`)
+
+The `frontend/` directory is a git submodule pointing at [`ha-pointsbot-cards`](https://github.com/kylerm42/ha-pointsbot-cards) — the companion Lovelace card repository. It is not part of the Python integration; it is wired here solely to support the local development workflow.
+
+### Submodule basics
+
+```bash
+# Initialize after a fresh clone (dev.sh up does this automatically)
+git submodule update --init --recursive
+
+# Update to latest ha-pointsbot-cards commit
+git submodule update --remote frontend
+
+# After updating, commit the new gitlink in ha-pointsbot
+git add frontend && git commit -m "chore: update frontend submodule to <hash>"
+```
+
+### Card-builder dev workflow
+
+`docker-compose.yml` defines a `card-builder` service that mounts `frontend/` and runs `npm run watch` inside a `node:20` container. The build output (`frontend/dist/`) is mounted into the HA container at `/config/www/community/pointsbot-cards/`, mimicking the path HACS would use for a frontend plugin.
+
+When adding PointsBot Cards as a Lovelace resource in the dev instance, use:
+
+```yaml
+url: /local/community/pointsbot-cards/pointsbot-cards.js
+type: module
+```
+
+`./dev.sh up` auto-initializes the submodule if `frontend/src` is missing, so a fresh clone requires no manual submodule step before starting the dev environment.
+
+### Frontend module layout
+
+All card source files live under `frontend/src/` (i.e., `ha-pointsbot-cards/src/`).
+
+| File | Responsibility |
+|---|---|
+| `pointsbot-person-card.ts` | Main card element; registers `custom:pointsbot-person-card`; reads `hass.states` on every `hass` setter update; dispatches all writes via `hass.callService` |
+| `pointsbot-person-card-editor.ts` | Visual config editor; returned by `getConfigElement`; renders `ha-entity-picker` filtered to `sensor` domain; fires `config-changed` events |
+| `collapsible-section.ts` | Reusable expand/collapse element used for base tasks, bonus tasks, and adjustments sections |
+| `adjust-points-dialog.ts` | Dialog element for the manual point adjustment form; validates amount (non-zero integer) and reason (non-empty) before calling `pointsbot.adjust_points` |
+| `types.ts` | Shared TypeScript interfaces mirroring the Phase 1 sensor attribute contract |
+
+Tests live alongside sources as `*.test.ts` files and run via `pnpm test` (Vitest + happy-dom, no browser required).
+
+---
+
 ## Spec Files
 
 For full architecture rationale, data model decisions, and implementation history:
 
 - `~/.local/share/specs/ha-pointsbot/proposed/20260711-pointsbot-overview/feature-spec.md` — High-level architecture, phasing, rejected patterns
 - `~/.local/share/specs/ha-pointsbot/proposed/20260711-pointsbot-phase1-backend/feature-spec.md` — Phase 1 detailed spec; Section 8 (Implementation Notes) contains a per-phase record of decisions, deviations, and test results
+- `~/.local/share/specs/ha-pointsbot/proposed/20260715-pointsbot-phase2-frontend/feature-spec.md` — Phase 2 frontend spec; Section 8 covers Phase 2a–2c implementation notes, deviations, and the manual QA checklist

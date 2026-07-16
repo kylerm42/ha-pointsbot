@@ -18,6 +18,12 @@ shift || true
 
 case "$CMD" in
     up)
+        # Initialize/update submodule if needed
+        if [ ! -d "frontend/src" ]; then
+            echo "Initializing frontend submodule..."
+            git submodule update --init --recursive
+        fi
+
         mkdir -p dev-config
         echo "Starting PointsBot development environment..."
         docker compose $COMPOSE_FILES up -d "$@"
