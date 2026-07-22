@@ -21,14 +21,14 @@ All integration source files live under `custom_components/pointsbot/`.
 |---|---|
 | `manifest.json` | `domain=pointsbot`, `single_config_entry: true`, no external requirements |
 | `const.py` | All constants: `DOMAIN`, storage keys, `STORAGE_VERSION`, task type strings, event type strings, service name strings, dispatcher signal format strings |
-| `config_flow.py` | `PointsBotConfigFlow(ConfigFlow)`: single-instance setup step with no user input fields; aborts with `single_instance_allowed` if an entry already exists. No options flow. |
+| `config_flow.py` | `PointsBotConfigFlow(ConfigFlow)`: single-instance setup step that prompts for `title` (TextSelector, default `"PointsBot"`) and `icon` (IconSelector, default `"mdi:star-circle"`); both required and validated non-empty, then stored on `entry.data`. The `icon` is exposed as a sensor attribute so the frontend card can render it next to weekly points. Aborts with `single_instance_allowed` if an entry already exists. No options flow. |
 | `store.py` | `PointsBotStore`: owns the `pointsbot_data` Store file; in-memory dict cache; `asyncio.Lock` on all mutation methods; CRUD for users, base tasks, bonus tasks, weekly adjustments; rollover application |
 | `history_log.py` | `PointsBotHistoryLog`: owns the `pointsbot_history` Store file; append-only `async_append(event: dict)` with auto-assigned UUID and UTC timestamp; no size cap, never trimmed |
 | `people_sync.py` | `async_sync_people(hass, store, entry_id)`: enumerates `hass.states.async_all("person")`; upserts a `PointsBotUser` profile for each (create with `weekly_allotment: 0` if new, no-op if already exists); dispatches `SIGNAL_POINTSBOT_NEW_PERSON` for newly discovered persons; never deletes a user |
 | `weekly_reset.py` | `async_perform_weekly_reset(hass, store, history_log, entry_id)`: iterates all users; applies rollover (see data model); appends a `weekly_rollover` event per user to the history log; dispatches `SIGNAL_POINTSBOT_UPDATE` to trigger sensor refresh |
 | `sensor.py` | `PointsBotUserSensor(SensorEntity)`: one instance per user; `unique_id = f"pointsbot_{person_id}"`; `native_value = total_points`; `extra_state_attributes` includes `weekly_points`, `weekly_allotment`, `base_tasks`, `bonus_tasks`, `weekly_adjustments`, `person_id`, plus `name` and `picture` resolved live from `hass.states.get(person_id)` at render time (never cached); dynamic entity creation via `SIGNAL_POINTSBOT_NEW_PERSON` dispatcher for persons discovered after initial setup |
-| `services.py` | Handler functions for all 9 services + `async_register_services`; `_get_components` helper resolves `store`/`history_log`/`entry_id` from `hass.data`; `_require_person` helper validates `person_id` before any store call |
-| `services.yaml` | Declarative service schema (field names, selectors, descriptions, examples) for all 9 services; this is the primary end-user documentation for Phase 1 |
+| `services.py` | Handler functions for all 10 services + `async_register_services`; `_get_components` helper resolves `store`/`history_log`/`entry_id` from `hass.data`; `_require_person` helper validates `person_id` before any store call |
+| `services.yaml` | Declarative service schema (field names, selectors, descriptions, examples) for all 10 services; this is the primary end-user documentation for Phase 1 |
 | `__init__.py` | `async_setup_entry`: instantiate `PointsBotStore` and `PointsBotHistoryLog` → load both stores → `async_sync_people` → `async_forward_entry_setups` (SENSOR platform) → `async_register_services` → register `async_track_time_change` callback (daily at 00:00:00; Monday guard inside callback) → store unsubscribe callback for unload cleanup |
 
 ---
@@ -113,7 +113,7 @@ For each user, the rollover performs the following atomically (under `PointsBotS
 
 ## Service Catalog
 
-Nine services are registered under the `pointsbot` domain. See `custom_components/pointsbot/services.yaml` for the full declarative schema and field descriptions.
+Ten services are registered under the `pointsbot` domain. See `custom_components/pointsbot/services.yaml` for the full declarative schema and field descriptions.
 
 | Service | Parameters | Notes |
 |---|---|---|
@@ -125,6 +125,7 @@ Nine services are registered under the `pointsbot` domain. See `custom_component
 | `delete_task` | `person_id`, `task_type`, `task_id` | Hard delete; historical `pointsbot_history` entries are retained |
 | `toggle_base_task` | `person_id`, `task_id` | Flips `done`; no point effect |
 | `complete_bonus_task` | `person_id`, `task_id` | Rejects if `enabled: false`; increments `completions_this_week`, adds `points_value` to `weekly_points`, logs `bonus_completion` |
+| `uncomplete_bonus_task` | `person_id`, `task_id` | Rejects if no completion to undo; decrements `completions_this_week`, subtracts `points_value` from `weekly_points`, logs `bonus_uncompletion` |
 | `run_weekly_reset` | *(none)* | Manually triggers the identical rollover path as the scheduled job, for all users |
 
 ---
@@ -170,7 +171,7 @@ Tests live under `tests/`. The suite uses `pytest-asyncio` (`asyncio_mode = auto
 | `tests/test_store.py` | `PointsBotStore` CRUD, rollover math, edge cases |
 | `tests/test_history_log.py` | `PointsBotHistoryLog` load, append, uncapped growth, UUID uniqueness |
 | `tests/test_phase1b.py` | `people_sync`, `weekly_reset`, sensor entity behavior, `async_setup_entry` orchestration |
-| `tests/test_services.py` | All 9 service handlers, `ServiceValidationError` cases, sensor round-trip assertions, concurrent write edge cases |
+| `tests/test_services.py` | All 10 service handlers, `ServiceValidationError` cases, sensor round-trip assertions, concurrent write edge cases |
 
 Run tests: `pytest` from the repo root.
 
