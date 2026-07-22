@@ -1,6 +1,8 @@
 """Constants for the PointsBot integration."""
 
 DOMAIN = "pointsbot"
+DEFAULT_CONFIG_TITLE = "PointsBot"
+DEFAULT_CONFIG_ICON = "mdi:star-circle"
 
 # Storage
 STORAGE_KEY_DATA = "pointsbot_data"

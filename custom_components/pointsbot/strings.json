@@ -3,12 +3,19 @@
     "step": {
       "user": {
         "title": "Set up PointsBot",
-        "description": "PointsBot will automatically create a points profile for every Home Assistant person entity. No additional configuration is required."
+        "description": "PointsBot will automatically create a points profile for every Home Assistant person entity.",
+        "data": {
+          "title": "Display name",
+          "icon": "Icon"
+        }
       }
     },
     "abort": {
       "single_instance_allowed": "Only a single PointsBot integration instance is allowed."
     },
-    "error": {}
+    "error": {
+      "title_required": "Enter a display name.",
+      "icon_required": "Select an icon."
+    }
   }
 }

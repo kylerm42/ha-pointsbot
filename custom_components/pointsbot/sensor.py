@@ -33,8 +33,9 @@ async def async_setup_entry(
     entry_id = entry.entry_id
 
     # Create initial entities for all persons already in the store.
+    icon = entry.data.get("icon")
     initial_entities = [
-        PointsBotUserSensor(store, person_id, entry_id)
+        PointsBotUserSensor(store, person_id, entry_id, icon)
         for person_id in store.get_all_person_ids()
     ]
     async_add_entities(initial_entities)
@@ -43,7 +44,7 @@ async def async_setup_entry(
     @callback
     def _async_new_person(person_id: str) -> None:
         _LOGGER.debug("Sensor platform: adding entity for new person %s", person_id)
-        async_add_entities([PointsBotUserSensor(store, person_id, entry_id)])
+        async_add_entities([PointsBotUserSensor(store, person_id, entry_id, icon)])
 
     entry.async_on_unload(
         async_dispatcher_connect(
@@ -71,11 +72,13 @@ class PointsBotUserSensor(SensorEntity):
         store: Any,  # PointsBotStore — avoided circular import with Any
         person_id: str,
         entry_id: str,
+        icon: str | None = None,
     ) -> None:
         """Initialise the sensor."""
         self._store = store
         self._person_id = person_id
         self._entry_id = entry_id
+        self._icon = icon
 
         # Unique ID is stable across renames of the person entity.
         self._attr_unique_id = f"pointsbot_{person_id}"
@@ -150,4 +153,5 @@ class PointsBotUserSensor(SensorEntity):
             "person_id": self._person_id,
             "name": name,
             "picture": picture,
+            "icon": self._icon,
         }
