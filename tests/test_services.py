@@ -16,6 +16,7 @@ import pytest
 from custom_components.pointsbot.const import (
     DOMAIN,
     EVENT_BONUS_COMPLETION,
+    EVENT_BONUS_UNCOMPLETION,
     EVENT_MANUAL_ADJUSTMENT,
     EVENT_WEEKLY_ROLLOVER,
     SIGNAL_POINTSBOT_UPDATE,
@@ -27,6 +28,7 @@ from custom_components.pointsbot.services import (
     handle_adjust_points,
     handle_add_task,
     handle_complete_bonus_task,
+    handle_uncomplete_bonus_task,
     handle_delete_task,
     handle_run_weekly_reset,
     handle_set_weekly_allotment,
@@ -663,6 +665,38 @@ class TestHandleCompleteBonusTask:
                 hass, _make_call({"person_id": "person.alice", "task_id": tid})
             )
         mock_send.assert_called_once_with(hass, SIGNAL_POINTSBOT_UPDATE.format("eid"))
+
+
+class TestHandleUncompleteBonusTask:
+    async def _setup(self):
+        hass = MagicMock()
+        store = await _make_store(hass)
+        log = await _make_history_log(hass)
+        await store.async_upsert_user_profile("person.alice")
+        return _make_hass(store, log), store, log
+
+    async def test_reverses_completion_and_records_history(self) -> None:
+        hass, store, log = await self._setup()
+        tid = await store.async_add_task("person.alice", "bonus", "Vacuum", points_value=7)
+        await store.async_complete_bonus_task("person.alice", tid)
+        with patch("custom_components.pointsbot.services.async_dispatcher_send"):
+            await handle_uncomplete_bonus_task(
+                hass, _make_call({"person_id": "person.alice", "task_id": tid})
+            )
+        task = store.get_user_data("person.alice")["bonus_tasks"][0]
+        assert task["completions_this_week"] == 0
+        assert store.get_user_data("person.alice")["weekly_points"] == 0
+        event = log.get_all_events()[0]
+        assert event["event_type"] == EVENT_BONUS_UNCOMPLETION
+        assert event["amount"] == -7
+
+    async def test_rejects_without_completion(self) -> None:
+        hass, store, log = await self._setup()
+        tid = await store.async_add_task("person.alice", "bonus", "Vacuum", points_value=7)
+        with pytest.raises(ServiceValidationError, match="no completion"):
+            await handle_uncomplete_bonus_task(
+                hass, _make_call({"person_id": "person.alice", "task_id": tid})
+            )
 
 
 # ---------------------------------------------------------------------------

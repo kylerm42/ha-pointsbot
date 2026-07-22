@@ -309,6 +309,29 @@ complete_bonus_task:
       selector:
         text:
 
+uncomplete_bonus_task:
+  name: Uncomplete Bonus Task
+  description: >
+    Undo one completion of a bonus task. Immediately subtracts the task's
+    points_value from the person's current week's points and decrements the
+    task's weekly completion counter. The reversal is recorded permanently in
+    the point history log. Returns an error if the task has no completion to undo.
+  fields:
+    person_id:
+      name: Person ID
+      description: The entity ID of the Home Assistant person who owns the bonus task.
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    task_id:
+      name: Task ID
+      description: The UUID of the bonus task to uncomplete.
+      required: true
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      selector:
+        text:
+
 run_weekly_reset:
   name: Run Weekly Reset
   description: >

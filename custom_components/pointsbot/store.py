@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     EVENT_BONUS_COMPLETION,
+    EVENT_BONUS_UNCOMPLETION,
     EVENT_MANUAL_ADJUSTMENT,
     EVENT_WEEKLY_ROLLOVER,
     STORAGE_KEY_DATA,
@@ -257,6 +258,41 @@ class PointsBotStore:
                 "task_id": task_id,
                 "task_name": task["name"],
                 "amount": task["points_value"],
+            }
+
+    async def async_uncomplete_bonus_task(
+        self, person_id: str, task_id: str
+    ) -> dict[str, Any]:
+        """Undo one completion of a bonus task.
+
+        Decrements ``completions_this_week`` and subtracts ``points_value``
+        from ``weekly_points``. Raises ``ValueError`` when there is no
+        completion to undo.
+        """
+        async with self._lock:
+            user = self._require_user(person_id)
+            task = next(
+                (t for t in user["bonus_tasks"] if t["id"] == task_id), None
+            )
+            if task is None:
+                raise KeyError(
+                    f"task_id {task_id!r} not found in bonus_tasks for {person_id!r}"
+                )
+            if task["completions_this_week"] <= 0:
+                raise ValueError(
+                    f"Bonus task {task_id!r} has no completion to undo"
+                )
+
+            task["completions_this_week"] -= 1
+            user["weekly_points"] -= task["points_value"]
+            await self.async_save()
+
+            return {
+                "event_type": EVENT_BONUS_UNCOMPLETION,
+                "person_id": person_id,
+                "task_id": task_id,
+                "task_name": task["name"],
+                "amount": -task["points_value"],
             }
 
     # ------------------------------------------------------------------

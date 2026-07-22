@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -141,9 +142,11 @@ class PointsBotUserSensor(SensorEntity):
         return {
             "weekly_points": data["weekly_points"],
             "weekly_allotment": data["weekly_allotment"],
-            "base_tasks": data["base_tasks"],
-            "bonus_tasks": data["bonus_tasks"],
-            "weekly_adjustments": data["weekly_adjustments"],
+            # Publish snapshots rather than the store's live nested lists.
+            # Store mutations must produce observable HA attribute changes.
+            "base_tasks": deepcopy(data["base_tasks"]),
+            "bonus_tasks": deepcopy(data["bonus_tasks"]),
+            "weekly_adjustments": deepcopy(data["weekly_adjustments"]),
             "person_id": self._person_id,
             "name": name,
             "picture": picture,

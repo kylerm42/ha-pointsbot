@@ -333,6 +333,36 @@ class TestCompleteBonusTask:
             await store.async_complete_bonus_task(PERSON_ID, "bad-uuid")
 
 
+class TestUncompleteBonusTask:
+    async def _setup(self, fake_store):
+        store = await _loaded_store(fake_store)
+        await store.async_upsert_user_profile(PERSON_ID)
+        return store
+
+    async def test_uncompletion_decrements_count_and_points(self, fake_store):
+        store = await self._setup(fake_store)
+        task_id = await store.async_add_task(PERSON_ID, "bonus", "Vacuum", points_value=5)
+        await store.async_complete_bonus_task(PERSON_ID, task_id)
+        event = await store.async_uncomplete_bonus_task(PERSON_ID, task_id)
+
+        task = store.get_user_data(PERSON_ID)["bonus_tasks"][0]
+        assert task["completions_this_week"] == 0
+        assert store.get_user_data(PERSON_ID)["weekly_points"] == 0
+        assert event["event_type"] == "bonus_uncompletion"
+        assert event["amount"] == -5
+
+    async def test_uncompletion_without_completion_raises(self, fake_store):
+        store = await self._setup(fake_store)
+        task_id = await store.async_add_task(PERSON_ID, "bonus", "Vacuum", points_value=5)
+        with pytest.raises(ValueError, match="no completion"):
+            await store.async_uncomplete_bonus_task(PERSON_ID, task_id)
+
+    async def test_uncompletion_unknown_task_raises(self, fake_store):
+        store = await self._setup(fake_store)
+        with pytest.raises(KeyError):
+            await store.async_uncomplete_bonus_task(PERSON_ID, "bad-uuid")
+
+
 # ---------------------------------------------------------------------------
 # async_adjust_points
 # ---------------------------------------------------------------------------

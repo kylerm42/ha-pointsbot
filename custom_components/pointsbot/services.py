@@ -1,6 +1,6 @@
 """Service handlers for the PointsBot integration.
 
-All nine services delegate to PointsBotStore / PointsBotHistoryLog / helper
+All ten services delegate to PointsBotStore / PointsBotHistoryLog / helper
 modules established in Phases 1a and 1b, then dispatch SIGNAL_POINTSBOT_UPDATE
 so that affected sensor entities refresh their HA state immediately.
 
@@ -26,6 +26,7 @@ from .const import (
     SERVICE_SET_WEEKLY_ALLOTMENT,
     SERVICE_SYNC_PEOPLE,
     SERVICE_TOGGLE_BASE_TASK,
+    SERVICE_UNCOMPLETE_BONUS_TASK,
     SERVICE_UPDATE_TASK,
     SIGNAL_POINTSBOT_UPDATE,
     TASK_TYPE_BASE,
@@ -389,6 +390,36 @@ async def handle_complete_bonus_task(hass: HomeAssistant, call: ServiceCall) -> 
     )
 
 
+async def handle_uncomplete_bonus_task(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle pointsbot.uncomplete_bonus_task — undo a bonus completion."""
+    store, history_log, entry_id = _get_components(hass)
+
+    person_id = str(_require_field(call, "person_id"))
+    task_id = str(_require_field(call, "task_id"))
+
+    _require_person(store, person_id)
+
+    try:
+        event = await store.async_uncomplete_bonus_task(person_id, task_id)
+    except KeyError as exc:
+        raise ServiceValidationError(
+            f"Task not found: task_id '{task_id}' does not exist in "
+            f"bonus_tasks for person '{person_id}'. "
+            "Verify the task_id is correct and the task is a bonus task, not a base task."
+        ) from exc
+    except ValueError as exc:
+        raise ServiceValidationError(
+            f"Cannot uncomplete task '{task_id}': it has no completion to undo."
+        ) from exc
+
+    await history_log.async_append(event)
+    _dispatch_update(hass, entry_id)
+    _LOGGER.debug(
+        "uncomplete_bonus_task: %s %s %d pts",
+        person_id, task_id, event["amount"]
+    )
+
+
 async def handle_run_weekly_reset(hass: HomeAssistant, call: ServiceCall) -> None:
     """Handle pointsbot.run_weekly_reset — trigger the full weekly rollover now."""
     store, history_log, entry_id = _get_components(hass)
@@ -409,6 +440,7 @@ _HANDLERS = {
     SERVICE_DELETE_TASK: handle_delete_task,
     SERVICE_TOGGLE_BASE_TASK: handle_toggle_base_task,
     SERVICE_COMPLETE_BONUS_TASK: handle_complete_bonus_task,
+    SERVICE_UNCOMPLETE_BONUS_TASK: handle_uncomplete_bonus_task,
     SERVICE_RUN_WEEKLY_RESET: handle_run_weekly_reset,
 }
 
@@ -421,9 +453,14 @@ def async_register_services(hass: HomeAssistant) -> None:
     """
     for service_name, handler in _HANDLERS.items():
         if not hass.services.has_service(DOMAIN, service_name):
+            async def _service_handler(
+                call: ServiceCall, service_handler=handler
+            ) -> None:
+                await service_handler(hass, call)
+
             hass.services.async_register(
                 DOMAIN,
                 service_name,
-                lambda call, h=handler: h(hass, call),
+                _service_handler,
             )
             _LOGGER.debug("Registered service: %s.%s", DOMAIN, service_name)
