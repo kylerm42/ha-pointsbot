@@ -143,6 +143,7 @@ Key decisions and their rationale are documented in the specs. Consult these bef
 | `update_task` raises on base+bonus-only fields | Explicit `ServiceValidationError` for mismatched field combinations (better UX than silent ignore) |
 | No `DataUpdateCoordinator` | No external polling; entities refresh via `async_write_ha_state()` directly after each store mutation |
 | Concurrent write safety | `PointsBotStore` uses a single `asyncio.Lock` across all mutation methods |
+| Configurable card accent color | `CardConfig.accent_color` (#RRGGBB) propagates to all child components via `--pointsbot-accent-color` / `--pointsbot-accent-text-color` CSS custom properties; defaults to `#B29FE8`; contrast text auto-flips via WCAG luminance (>0.5 → `#17151d`, else `#ffffff`) |
 
 ---
 
@@ -213,8 +214,7 @@ All card source files live under `frontend/src/` (i.e., `ha-pointsbot-cards/src/
 
 | File | Responsibility |
 |---|---|
-| `pointsbot-person-card.ts` | Main card element; registers `custom:pointsbot-person-card`; reads `hass.states` on every `hass` setter update; dispatches all writes via `hass.callService` |
-| `pointsbot-person-card-editor.ts` | Visual config editor; returned by `getConfigElement`; renders `ha-entity-picker` filtered to `sensor` domain; fires `config-changed` events |
+| `pointsbot-person-card.ts` | Main card element; registers `custom:pointsbot-person-card`; reads `hass.states` on every `hass` setter update; dispatches all writes via `hass.callService`; exposes `getConfigForm()` for the Lovelace visual editor |
 | `collapsible-section.ts` | Reusable expand/collapse element used for base tasks, bonus tasks, and adjustments sections |
 | `adjust-points-dialog.ts` | Dialog element for the manual point adjustment form; validates amount (non-zero integer) and reason (non-empty) before calling `pointsbot.adjust_points` |
 | `types.ts` | Shared TypeScript interfaces mirroring the Phase 1 sensor attribute contract |
