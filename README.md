@@ -5,15 +5,16 @@ A Home Assistant custom integration for family points and allowance tracking. Po
 ## Features
 
 - **Automatic person sync** — every `person.*` entity gets a points profile on setup; new family members are picked up on demand via the `sync_people` action
-- **Two point types** — a `weekly_points` balance (current week) that resets every Monday, and a `total_points` balance (lifetime, rolls up on reset)
+- **Two point balances** — `weekly_points` tracks the current week; `total_points` is the banked balance, increased by Monday rollover and spent on rewards
 - **Per-person weekly allotment** — configure how many points each person starts with at the beginning of each week; defaults to 0 (opt-in)
 - **Base tasks** — recurring informational chores with a done/not-done checkbox; no points on completion; checkboxes reset every Monday
 - **Bonus tasks** — completable tasks worth a fixed point value; can be completed multiple times per week; completion counts reset every Monday
 - **Manual point adjustments** — give or take points with a required reason; logged permanently in the audit trail
 - **Permanent audit log** — every point-affecting event (adjustments, bonus completions, weekly rollovers) is written to an append-only history store that is never trimmed
 - **Per-person sensor entity** — one `sensor.pointsbot_<person_slug>` entity per family member, with all current state in attributes, ready for dashboard cards
+- **Person-owned rewards** — create, edit, delete, and redeem rewards through services or the dedicated rewards card; redemption spends banked points only
 
-> **Dashboard Cards:** The companion frontend repository [ha-pointsbot-cards](https://github.com/kylerm42/ha-pointsbot-cards) delivers per-person Lovelace cards that consume the `sensor.pointsbot_*` entities produced by this integration. Install it via HACS (Frontend) or manually — see the cards repo README for instructions. The full integration is also usable without cards via **Developer Tools → Actions**.
+> **Dashboard Cards:** The companion frontend repository [ha-pointsbot-cards](https://github.com/kylerm42/ha-pointsbot-cards) delivers Lovelace cards that consume the `sensor.pointsbot_*` entities produced by this integration. The rewards card requires a configured `person.*` entity and displays and manages only that person's rewards; it has no runtime person selector or fallback. Install it via HACS (Frontend) or manually — see the cards repo README for instructions. The full integration is also usable without cards via **Developer Tools → Actions**.
 
 ---
 
@@ -66,7 +67,7 @@ Task `id` values (UUIDs) are required parameters for `update_task`, `delete_task
 
 ## Services Reference
 
-All nine services live under the `pointsbot` domain and are available in **Developer Tools → Actions**.
+ All twelve services live under the `pointsbot` domain and are available in **Developer Tools → Actions**.
 
 ---
 
@@ -75,6 +76,30 @@ All nine services live under the `pointsbot` domain and are available in **Devel
 Re-synchronize all Home Assistant `person.*` entities into PointsBot user profiles. Creates a profile (weekly allotment = 0) for any person not yet known to PointsBot. Existing profiles are never modified or deleted. Run this after adding a new family member to Home Assistant.
 
 *No parameters.*
+
+---
+
+### Reward services
+
+`pointsbot.manage_reward` creates or updates a person-owned reward. It requires
+`person_id`, `name`, positive integer `cost`, and an MDI `icon`; `description` is
+optional and `reward_id` is supplied only for updates. `pointsbot.delete_reward`
+permanently removes a reward definition, while `pointsbot.redeem_reward` accepts
+`person_id` and `reward_id`.
+
+Rewards are redeemed from **banked `total_points` only**. Current-week points are
+not spendable until the Monday rollover. A redemption leaves weekly points,
+tasks, adjustments, and allotments unchanged and writes a permanent
+`reward_redemption` history event. The rewards card can be installed from the
+companion cards repository as `custom:pointsbot-person-rewards-card`; it requires a
+configured `person` entity and displays only that person's rewards. It has no
+runtime multi-person selector and supports `hide_card_background`,
+`show_disabled_rewards`, `sort_by`, `show_add_reward_button`, and `accent_color`.
+
+Reward management and redemption intentionally follow dashboard access: anyone
+who can operate the card or call these services can change rewards or spend the
+selected person's banked points. Home Assistant dashboard/service permissions
+are the deployment trust boundary; PointsBot adds no separate authorization layer.
 
 ---
 

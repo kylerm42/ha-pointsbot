@@ -43,6 +43,10 @@ class PointsBotHistoryLog:
             self._data = {"events": []}
         else:
             self._data = stored
+        # Preserve all existing event dictionaries while tolerating legacy or
+        # partially initialized history payloads.
+        if not isinstance(self._data.get("events"), list):
+            self._data["events"] = []
 
     # ------------------------------------------------------------------
     # Append

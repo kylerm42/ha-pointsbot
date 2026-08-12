@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from typing import Any
 from uuid import uuid4
@@ -15,6 +16,7 @@ from .const import (
     EVENT_BONUS_COMPLETION,
     EVENT_BONUS_UNCOMPLETION,
     EVENT_MANUAL_ADJUSTMENT,
+    EVENT_REWARD_REDEMPTION,
     EVENT_WEEKLY_ROLLOVER,
     STORAGE_KEY_DATA,
     STORAGE_VERSION,
@@ -36,6 +38,8 @@ def _empty_user() -> dict[str, Any]:
         "base_tasks": [],
         "bonus_tasks": [],
         "weekly_adjustments": [],
+        "rewards": [],
+        "pending_redemptions": [],
     }
 
 
@@ -64,6 +68,25 @@ class PointsBotStore:
             self._data = {"users": {}}
         else:
             self._data = stored
+        changed = False
+        if not isinstance(self._data, dict):
+            raise ValueError("PointsBot data must be an object")
+        users = self._data.setdefault("users", {})
+        if not isinstance(users, dict):
+            raise ValueError("PointsBot users must be an object")
+        for person_id, user in users.items():
+            if not isinstance(user, dict):
+                raise ValueError(f"Invalid profile for {person_id!r}")
+            for key, value in _empty_user().items():
+                if key not in user:
+                    user[key] = copy.deepcopy(value)
+                    changed = True
+            if not isinstance(user["rewards"], list):
+                raise ValueError(f"Invalid rewards catalog for {person_id!r}")
+            if not isinstance(user["pending_redemptions"], list):
+                raise ValueError(f"Invalid pending redemptions for {person_id!r}")
+        if changed:
+            await self.async_save()
 
     async def async_save(self) -> None:
         """Persist the in-memory cache to disk."""
@@ -405,6 +428,135 @@ class PointsBotStore:
                 "rolled_over_amount": rolled_over_amount,
                 "new_allotment": new_allotment,
             }
+
+    # ------------------------------------------------------------------
+    # Reward catalog and redemption
+    # ------------------------------------------------------------------
+
+    def _find_reward(self, reward_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Find a reward globally, returning its owner profile and record."""
+        for user in self._data["users"].values():
+            for reward in user.get("rewards", []):
+                if reward.get("id") == reward_id:
+                    return user, reward
+        raise KeyError(f"Unknown reward_id: {reward_id!r}")
+
+    async def async_manage_reward(
+        self,
+        person_id: str,
+        name: str,
+        cost: int,
+        icon: str,
+        description: str = "",
+        reward_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create or fully update a globally unique person-owned reward."""
+        if not isinstance(cost, int) or isinstance(cost, bool) or cost <= 0:
+            raise ValueError("reward cost must be a positive integer")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("reward name must be non-empty")
+        if not isinstance(icon, str) or not icon.strip():
+            raise ValueError("reward icon must be non-empty")
+        import re
+        if not re.fullmatch(r"mdi:[a-z0-9][a-z0-9-]*", icon.strip()):
+            raise ValueError("reward icon must be a valid MDI icon (mdi:name)")
+        if not isinstance(description, str):
+            raise ValueError("reward description must be a string")
+        async with self._lock:
+            target_user = self._require_user(person_id)
+            now = dt_util.utcnow().isoformat()
+            if reward_id is None:
+                reward = {
+                    "id": str(uuid4()), "name": name.strip(), "cost": cost,
+                    "icon": icon.strip(), "enabled": True,
+                    "description": description, "created": now, "modified": now,
+                    "person_id": person_id,
+                }
+                target_user["rewards"].append(reward)
+            else:
+                old_user, reward = self._find_reward(reward_id)
+                if old_user is not target_user:
+                    old_user["rewards"].remove(reward)
+                    target_user["rewards"].append(reward)
+                reward.update({"name": name.strip(), "cost": cost, "icon": icon.strip(),
+                               "description": description, "modified": now,
+                               "person_id": person_id})
+            await self.async_save()
+            return copy.deepcopy(reward)
+
+    async def async_get_reward(self, reward_id: str) -> dict[str, Any]:
+        async with self._lock:
+            _, reward = self._find_reward(reward_id)
+            return copy.deepcopy(reward)
+
+    async def async_delete_reward(self, reward_id: str) -> None:
+        async with self._lock:
+            user, reward = self._find_reward(reward_id)
+            user["rewards"].remove(reward)
+            await self.async_save()
+
+    async def async_redeem_reward(self, person_id: str, reward_id: str) -> dict[str, Any]:
+        """Redeem an enabled reward against banked points only."""
+        async with self._lock:
+            user = self._require_user(person_id)
+            owner, reward = self._find_reward(reward_id)
+            if owner is not user or reward.get("person_id") != person_id:
+                raise ValueError("Reward does not belong to this person")
+            if not reward.get("enabled", True):
+                raise ValueError("Reward is disabled")
+            if user["total_points"] < reward["cost"]:
+                raise ValueError("Insufficient banked points")
+            redemption_id = str(uuid4())
+            event = {
+                "event_type": EVENT_REWARD_REDEMPTION,
+                "redemption_id": redemption_id,
+                "person_id": person_id,
+                "reward_id": reward["id"],
+                "reward_name": reward["name"],
+                "cost": reward["cost"],
+                "amount": -reward["cost"],
+            }
+            user["pending_redemptions"].append(copy.deepcopy(event))
+            await self.async_save()
+            user["total_points"] -= reward["cost"]
+            await self.async_save()
+            return event
+
+    async def async_commit_redemption(self, redemption_id: str) -> None:
+        """Remove a redemption marker after its audit event is durable."""
+        async with self._lock:
+            for user in self._data["users"].values():
+                before = len(user["pending_redemptions"])
+                user["pending_redemptions"] = [
+                    item for item in user["pending_redemptions"]
+                    if item.get("redemption_id") != redemption_id
+                ]
+                if len(user["pending_redemptions"]) != before:
+                    await self.async_save()
+                    return
+            raise KeyError(f"Unknown redemption_id: {redemption_id!r}")
+
+    async def async_reconcile_redemptions(self, history_events: list[dict[str, Any]]) -> None:
+        """Undo deductions whose audit event was not durably written."""
+        audited = {event.get("redemption_id") for event in history_events}
+        async with self._lock:
+            changed = False
+            for user in self._data["users"].values():
+                pending = user["pending_redemptions"]
+                for event in pending:
+                    if event.get("redemption_id") not in audited:
+                        user["total_points"] += event["cost"]
+                    changed = True
+                user["pending_redemptions"] = []
+            if changed:
+                await self.async_save()
+
+    async def async_restore_redemption(self, person_id: str, amount: int) -> None:
+        """Restore a balance when the companion history write fails."""
+        async with self._lock:
+            user = self._require_user(person_id)
+            user["total_points"] += amount
+            await self.async_save()
 
     # ------------------------------------------------------------------
     # Read helpers (no lock needed — reads are non-mutating)

@@ -150,6 +150,7 @@ class PointsBotUserSensor(SensorEntity):
             "base_tasks": deepcopy(data["base_tasks"]),
             "bonus_tasks": deepcopy(data["bonus_tasks"]),
             "weekly_adjustments": deepcopy(data["weekly_adjustments"]),
+            "rewards": deepcopy(data.get("rewards", [])),
             "person_id": self._person_id,
             "name": name,
             "picture": picture,

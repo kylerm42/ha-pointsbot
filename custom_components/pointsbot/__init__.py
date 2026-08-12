@@ -36,6 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     history_log = PointsBotHistoryLog(hass)
     await history_log.async_load()
+    await store.async_reconcile_redemptions(history_log.get_all_events())
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "store": store,

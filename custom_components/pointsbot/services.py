@@ -11,6 +11,7 @@ so that HA surfaces them as user-readable messages in the UI and logs.
 from __future__ import annotations
 
 import logging
+import re
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
@@ -23,6 +24,9 @@ from .const import (
     SERVICE_COMPLETE_BONUS_TASK,
     SERVICE_DELETE_TASK,
     SERVICE_RUN_WEEKLY_RESET,
+    SERVICE_MANAGE_REWARD,
+    SERVICE_REDEEM_REWARD,
+    SERVICE_DELETE_REWARD,
     SERVICE_SET_WEEKLY_ALLOTMENT,
     SERVICE_SYNC_PEOPLE,
     SERVICE_TOGGLE_BASE_TASK,
@@ -427,6 +431,66 @@ async def handle_run_weekly_reset(hass: HomeAssistant, call: ServiceCall) -> Non
     _LOGGER.info("run_weekly_reset: manual rollover complete")
 
 
+async def handle_manage_reward(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Create or update a person-owned reward."""
+    store, _history_log, entry_id = _get_components(hass)
+    person_id = str(_require_field(call, "person_id"))
+    name = _require_field(call, "name")
+    icon = _require_field(call, "icon")
+    cost = _require_field(call, "cost")
+    reward_id = call.data.get("reward_id")
+    description = call.data.get("description", "")
+
+    if not isinstance(name, str) or not name.strip():
+        raise ServiceValidationError("'name' must be a non-empty string.")
+    if not isinstance(icon, str) or not re.fullmatch(r"mdi:[a-z0-9][a-z0-9-]*", icon.strip()):
+        raise ServiceValidationError("'icon' must be a valid MDI icon in mdi:name format.")
+    if not isinstance(description, str):
+        raise ServiceValidationError("'description' must be a string.")
+    if isinstance(cost, bool) or not isinstance(cost, int):
+        raise ServiceValidationError(f"'cost' must be a positive integer, got {cost!r}.")
+    if cost <= 0:
+        raise ServiceValidationError("'cost' must be a positive integer.")
+    _require_person(store, person_id)
+    try:
+        await store.async_manage_reward(
+            person_id, name, cost, icon, description, str(reward_id) if reward_id else None
+        )
+    except (KeyError, ValueError) as exc:
+        raise ServiceValidationError(str(exc)) from exc
+    _dispatch_update(hass, entry_id)
+
+
+async def handle_redeem_reward(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Redeem an enabled reward from a person's banked balance."""
+    store, history_log, entry_id = _get_components(hass)
+    person_id = str(_require_field(call, "person_id"))
+    reward_id = str(_require_field(call, "reward_id"))
+    _require_person(store, person_id)
+    try:
+        event = await store.async_redeem_reward(person_id, reward_id)
+    except (KeyError, ValueError) as exc:
+        raise ServiceValidationError(str(exc)) from exc
+    try:
+        await history_log.async_append(event)
+        await store.async_commit_redemption(event["redemption_id"])
+    except Exception:
+        _LOGGER.exception("Redemption audit write failed; recovery marker retained")
+        raise
+    _dispatch_update(hass, entry_id)
+
+
+async def handle_delete_reward(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Delete a reward definition."""
+    store, _history_log, entry_id = _get_components(hass)
+    reward_id = str(_require_field(call, "reward_id"))
+    try:
+        await store.async_delete_reward(reward_id)
+    except KeyError as exc:
+        raise ServiceValidationError(str(exc)) from exc
+    _dispatch_update(hass, entry_id)
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -442,6 +506,9 @@ _HANDLERS = {
     SERVICE_COMPLETE_BONUS_TASK: handle_complete_bonus_task,
     SERVICE_UNCOMPLETE_BONUS_TASK: handle_uncomplete_bonus_task,
     SERVICE_RUN_WEEKLY_RESET: handle_run_weekly_reset,
+    SERVICE_MANAGE_REWARD: handle_manage_reward,
+    SERVICE_REDEEM_REWARD: handle_redeem_reward,
+    SERVICE_DELETE_REWARD: handle_delete_reward,
 }
 
 

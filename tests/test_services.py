@@ -19,6 +19,7 @@ from custom_components.pointsbot.const import (
     EVENT_BONUS_UNCOMPLETION,
     EVENT_MANUAL_ADJUSTMENT,
     EVENT_WEEKLY_ROLLOVER,
+    EVENT_REWARD_REDEMPTION,
     SIGNAL_POINTSBOT_UPDATE,
     TASK_TYPE_BASE,
     TASK_TYPE_BONUS,
@@ -35,6 +36,9 @@ from custom_components.pointsbot.services import (
     handle_sync_people,
     handle_toggle_base_task,
     handle_update_task,
+    handle_manage_reward,
+    handle_redeem_reward,
+    handle_delete_reward,
     async_register_services,
 )
 from custom_components.pointsbot.store import PointsBotStore
@@ -91,6 +95,43 @@ def _assert_signal_sent(hass: MagicMock, entry_id: str = "eid") -> None:
     # module level in tests that need fine-grained assertions; here we just
     # confirm the call happened by checking our mock dispatcher helper.
     pass  # Covered by module-level patch in specific tests below.
+
+
+class TestRewardServices:
+    async def test_manage_redeem_delete_and_dispatch(self) -> None:
+        hass = MagicMock()
+        store = await _make_store(hass)
+        log = await _make_history_log(hass)
+        hass = _make_hass(store, log)
+        await store.async_upsert_user_profile("person.alice")
+        with patch("custom_components.pointsbot.services.async_dispatcher_send") as dispatch:
+            await handle_manage_reward(hass, _make_call({
+                "person_id": "person.alice", "name": "Movie", "cost": 10,
+                "icon": "mdi:movie", "description": "A film",
+            }))
+            reward = store.get_user_data("person.alice")["rewards"][0]
+            data = store.get_user_data("person.alice")
+            data["total_points"] = 10
+            store._data["users"]["person.alice"]["total_points"] = 10
+            await handle_redeem_reward(hass, _make_call({
+                "person_id": "person.alice", "reward_id": reward["id"],
+            }))
+            await handle_delete_reward(hass, _make_call({"reward_id": reward["id"]}))
+        assert store.get_user_data("person.alice")["total_points"] == 0
+        assert log.get_all_events()[-1]["event_type"] == EVENT_REWARD_REDEMPTION
+        assert dispatch.call_count == 3
+
+    async def test_redeem_rejects_insufficient_banked_balance(self) -> None:
+        hass = MagicMock()
+        store = await _make_store(hass)
+        log = await _make_history_log(hass)
+        hass = _make_hass(store, log)
+        await store.async_upsert_user_profile("person.alice")
+        reward = await store.async_manage_reward("person.alice", "Movie", 1, "mdi:movie")
+        with pytest.raises(ServiceValidationError, match="Insufficient banked"):
+            await handle_redeem_reward(hass, _make_call({
+                "person_id": "person.alice", "reward_id": reward["id"],
+            }))
 
 
 # ---------------------------------------------------------------------------

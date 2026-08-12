@@ -7,6 +7,7 @@ required.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch, MagicMock
 import copy
 
@@ -581,3 +582,81 @@ class TestWeeklyRollover:
         user = store.get_user_data(PERSON_ID)
         # Count must still be 1 — not reset by toggling enabled
         assert user["bonus_tasks"][0]["completions_this_week"] == 1
+
+
+class TestRewards:
+    async def _setup(self, fake_store):
+        store = await _loaded_store(fake_store)
+        await store.async_upsert_user_profile(PERSON_ID)
+        await store.async_set_weekly_allotment(PERSON_ID, 7)
+        store._data["users"][PERSON_ID]["total_points"] = 20
+        store._data["users"][PERSON_ID]["weekly_points"] = 9
+        return store
+
+    async def test_profile_defaults_and_legacy_normalization(self, fake_store):
+        fake_store.seed({"users": {PERSON_ID: {
+            "weekly_allotment": 0, "total_points": 3, "weekly_points": 1,
+            "base_tasks": [], "bonus_tasks": [], "weekly_adjustments": [],
+        }}})
+        store = await _loaded_store(fake_store)
+        assert store.get_user_data(PERSON_ID)["rewards"] == []
+
+    async def test_create_update_reassign_and_global_lookup(self, fake_store):
+        store = await self._setup(fake_store)
+        other = "person.kid_two"
+        await store.async_upsert_user_profile(other)
+        reward = await store.async_manage_reward(PERSON_ID, " Movie ", 10, "mdi:movie")
+        assert reward["name"] == "Movie"
+        updated = await store.async_manage_reward(other, "Game", 12, "mdi:gamepad",
+                                                  description="Fun", reward_id=reward["id"])
+        assert updated["person_id"] == other
+        assert store.get_user_data(PERSON_ID)["rewards"] == []
+        assert (await store.async_get_reward(reward["id"]))["description"] == "Fun"
+
+    async def test_delete_unknown_reward_raises(self, fake_store):
+        store = await self._setup(fake_store)
+        with pytest.raises(KeyError, match="Unknown reward_id"):
+            await store.async_delete_reward("missing")
+
+    async def test_redeem_uses_banked_points_and_returns_immutable_snapshot(self, fake_store):
+        store = await self._setup(fake_store)
+        reward = await store.async_manage_reward(PERSON_ID, "Treat", 10, "mdi:gift")
+        event = await store.async_redeem_reward(PERSON_ID, reward["id"])
+        assert event | {} == event
+        assert event["event_type"] == "reward_redemption"
+        assert event["redemption_id"]
+        assert event["person_id"] == PERSON_ID
+        user = store.get_user_data(PERSON_ID)
+        assert user["total_points"] == 10
+        assert user["weekly_points"] == 9
+        await store.async_manage_reward(PERSON_ID, "Renamed", 10, "mdi:gift",
+                                         reward_id=reward["id"])
+        assert event["reward_name"] == "Treat"
+
+    async def test_redeem_rejects_disabled_wrong_owner_and_insufficient(self, fake_store):
+        store = await self._setup(fake_store)
+        other = "person.kid_two"
+        await store.async_upsert_user_profile(other)
+        reward = await store.async_manage_reward(PERSON_ID, "Treat", 10, "mdi:gift")
+        await store.async_manage_reward(PERSON_ID, "Treat", 10, "mdi:gift",
+                                        reward_id=reward["id"])
+        store.get_user_data(PERSON_ID)["rewards"][0]["enabled"] = False
+        with pytest.raises(ValueError, match="disabled"):
+            await store.async_redeem_reward(PERSON_ID, reward["id"])
+        store.get_user_data(PERSON_ID)["rewards"][0]["enabled"] = True
+        with pytest.raises(ValueError, match="belong"):
+            await store.async_redeem_reward(other, reward["id"])
+        store._data["users"][PERSON_ID]["total_points"] = 5
+        with pytest.raises(ValueError, match="Insufficient"):
+            await store.async_redeem_reward(PERSON_ID, reward["id"])
+
+    async def test_concurrent_redemption_has_exactly_one_success(self, fake_store):
+        store = await self._setup(fake_store)
+        reward = await store.async_manage_reward(PERSON_ID, "Treat", 15, "mdi:gift")
+        results = await asyncio.gather(
+            store.async_redeem_reward(PERSON_ID, reward["id"],),
+            store.async_redeem_reward(PERSON_ID, reward["id"],),
+            return_exceptions=True,
+        )
+        assert sum(not isinstance(result, Exception) for result in results) == 1
+        assert store.get_user_data(PERSON_ID)["total_points"] == 5

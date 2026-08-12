@@ -6,8 +6,8 @@ This file provides guidance to AI agents and developers working with code in thi
 
 **PointsBot** is a Home Assistant custom integration (domain: `pointsbot`) for family points and allowance tracking. It auto-syncs every `person.*` entity in Home Assistant into a points profile, supports per-person weekly allotments, base and bonus task lists, manual point adjustments with audit logging, and a weekly Monday-midnight rollover — all operable entirely through HA service calls (Developer Tools → Actions) with no required frontend.
 
-**Phase 1 (this repository):** Backend integration — fully functional.
-**Phase 2 (separate repo, not yet started):** Dashboard cards (`ha-pointsbot-cards`).
+**Backend:** Fully functional, including person-owned rewards and banked-only redemption.
+**Frontend:** The companion cards repository includes the standard person card and the dedicated person-rewards card.
 
 **Relationship to `ha-chorebot`:** PointsBot is a sibling integration by the same author. It intentionally drops OAuth/sync backends, template/instance recurrence, and multi-file storage sprawl from ChoreBot. Patterns reused: `Store`-backed JSON persistence, `async_track_time_change` for scheduled resets, `person.*` auto-sync, and the Docker Compose dev workflow. See the overview spec for a full list of accepted/rejected patterns.
 
@@ -22,12 +22,12 @@ All integration source files live under `custom_components/pointsbot/`.
 | `manifest.json` | `domain=pointsbot`, `single_config_entry: true`, no external requirements |
 | `const.py` | All constants: `DOMAIN`, storage keys, `STORAGE_VERSION`, task type strings, event type strings, service name strings, dispatcher signal format strings |
 | `config_flow.py` | `PointsBotConfigFlow(ConfigFlow)`: single-instance setup step that prompts for `title` (TextSelector, default `"PointsBot"`) and `icon` (IconSelector, default `"mdi:star-circle"`); both required and validated non-empty, then stored on `entry.data`. The `icon` is exposed as a sensor attribute so the frontend card can render it next to weekly points. Aborts with `single_instance_allowed` if an entry already exists. No options flow. |
-| `store.py` | `PointsBotStore`: owns the `pointsbot_data` Store file; in-memory dict cache; `asyncio.Lock` on all mutation methods; CRUD for users, base tasks, bonus tasks, weekly adjustments; rollover application |
+| `store.py` | `PointsBotStore`: owns the `pointsbot_data` Store file; in-memory dict cache; `asyncio.Lock` on all mutation methods; CRUD for users, tasks, weekly adjustments, and person-owned rewards; banked-only redemption; rollover application |
 | `history_log.py` | `PointsBotHistoryLog`: owns the `pointsbot_history` Store file; append-only `async_append(event: dict)` with auto-assigned UUID and UTC timestamp; no size cap, never trimmed |
 | `people_sync.py` | `async_sync_people(hass, store, entry_id)`: enumerates `hass.states.async_all("person")`; upserts a `PointsBotUser` profile for each (create with `weekly_allotment: 0` if new, no-op if already exists); dispatches `SIGNAL_POINTSBOT_NEW_PERSON` for newly discovered persons; never deletes a user |
 | `weekly_reset.py` | `async_perform_weekly_reset(hass, store, history_log, entry_id)`: iterates all users; applies rollover (see data model); appends a `weekly_rollover` event per user to the history log; dispatches `SIGNAL_POINTSBOT_UPDATE` to trigger sensor refresh |
-| `sensor.py` | `PointsBotUserSensor(SensorEntity)`: one instance per user; `unique_id = f"pointsbot_{person_id}"`; `native_value = total_points`; `extra_state_attributes` includes `weekly_points`, `weekly_allotment`, `base_tasks`, `bonus_tasks`, `weekly_adjustments`, `person_id`, plus `name` and `picture` resolved live from `hass.states.get(person_id)` at render time (never cached); dynamic entity creation via `SIGNAL_POINTSBOT_NEW_PERSON` dispatcher for persons discovered after initial setup |
-| `services.py` | Handler functions for all 10 services + `async_register_services`; `_get_components` helper resolves `store`/`history_log`/`entry_id` from `hass.data`; `_require_person` helper validates `person_id` before any store call |
+| `sensor.py` | `PointsBotUserSensor(SensorEntity)`: one instance per user; `unique_id = f"pointsbot_{person_id}"`; `native_value = total_points` (banked balance); attributes include weekly state, tasks, adjustments, defensive reward snapshots, `person_id`, and live `name`/`picture`; dynamic entity creation via `SIGNAL_POINTSBOT_NEW_PERSON` |
+| `services.py` | Handler functions for all 12 services, including `manage_reward`, `redeem_reward`, and `delete_reward`; centralized validation, history append, and update dispatch helpers |
 | `services.yaml` | Declarative service schema (field names, selectors, descriptions, examples) for all 10 services; this is the primary end-user documentation for Phase 1 |
 | `__init__.py` | `async_setup_entry`: instantiate `PointsBotStore` and `PointsBotHistoryLog` → load both stores → `async_sync_people` → `async_forward_entry_setups` (SENSOR platform) → `async_register_services` → register `async_track_time_change` callback (daily at 00:00:00; Monday guard inside callback) → store unsubscribe callback for unload cleanup |
 
@@ -46,7 +46,7 @@ Keyed by `person_id`. This is the source of truth for all sensor entity state.
   "users": {
     "person.alice": {
       "weekly_allotment": 50,        // opt-in per user; defaults to 0 on creation; no global default
-      "total_points": 340,           // lifetime accumulated (excludes current week)
+      "total_points": 340,           // banked balance; current-week points join at rollover
       "weekly_points": 12,           // current week only
       "base_tasks": [
         { "id": "uuid", "name": "Make bed", "done": false }
@@ -58,7 +58,12 @@ Keyed by `person_id`. This is the source of truth for all sensor entity state.
       "weekly_adjustments": [
         { "id": "uuid", "amount": -5, "reason": "Left dishes out",
           "timestamp": "2026-07-10T14:00:00+00:00" }
-      ]  // current week only; cleared (not archived) at weekly rollover
+      ],
+      "rewards": [
+        { "id": "uuid", "person_id": "person.alice", "name": "Movie night", "cost": 50,
+          "icon": "mdi:movie-open", "enabled": true, "description": "Choose a film",
+          "created": "2026-07-29T00:00:00+00:00", "modified": "2026-07-29T00:00:00+00:00" }
+      ]
     }
   }
 }
@@ -76,13 +81,16 @@ Append-only. Never trimmed. Not surfaced on any entity. One event per point-affe
     {
       "id": "uuid",
       "person_id": "person.alice",
-      "event_type": "manual_adjustment",   // | "bonus_completion" | "weekly_rollover"
+      "event_type": "manual_adjustment",   // | bonus_completion | weekly_rollover | reward_redemption
       "amount": -5,
       "reason": "Left dishes out",          // manual_adjustment only
       "task_id": "uuid",                    // bonus_completion only
       "task_name": "Vacuum living room",    // bonus_completion only
       "rolled_over_amount": 42,             // weekly_rollover only (total_points after rollover)
       "new_allotment": 50,                  // weekly_rollover only
+      "reward_id": "uuid",                 // reward_redemption only
+      "reward_name": "Movie night",        // reward_redemption only
+      "cost": 50,                           // reward_redemption only
       "timestamp": "2026-07-10T14:00:00+00:00"
     }
   ]
@@ -113,7 +121,7 @@ For each user, the rollover performs the following atomically (under `PointsBotS
 
 ## Service Catalog
 
-Ten services are registered under the `pointsbot` domain. See `custom_components/pointsbot/services.yaml` for the full declarative schema and field descriptions.
+Twelve services are registered under the `pointsbot` domain. See `custom_components/pointsbot/services.yaml` for the full declarative schema and field descriptions.
 
 | Service | Parameters | Notes |
 |---|---|---|
@@ -127,6 +135,9 @@ Ten services are registered under the `pointsbot` domain. See `custom_components
 | `complete_bonus_task` | `person_id`, `task_id` | Rejects if `enabled: false`; increments `completions_this_week`, adds `points_value` to `weekly_points`, logs `bonus_completion` |
 | `uncomplete_bonus_task` | `person_id`, `task_id` | Rejects if no completion to undo; decrements `completions_this_week`, subtracts `points_value` from `weekly_points`, logs `bonus_uncompletion` |
 | `run_weekly_reset` | *(none)* | Manually triggers the identical rollover path as the scheduled job, for all users |
+| `manage_reward` | `person_id`, `name`, `cost`, `icon`; optional `reward_id`, `description` | Creates or updates a person-owned reward; updates may reassign ownership |
+| `redeem_reward` | `person_id`, `reward_id` | Deducts cost from banked `total_points` only and logs `reward_redemption` |
+| `delete_reward` | `reward_id` | Permanently deletes a reward definition; history is retained |
 
 ---
 
@@ -172,7 +183,7 @@ Tests live under `tests/`. The suite uses `pytest-asyncio` (`asyncio_mode = auto
 | `tests/test_store.py` | `PointsBotStore` CRUD, rollover math, edge cases |
 | `tests/test_history_log.py` | `PointsBotHistoryLog` load, append, uncapped growth, UUID uniqueness |
 | `tests/test_phase1b.py` | `people_sync`, `weekly_reset`, sensor entity behavior, `async_setup_entry` orchestration |
-| `tests/test_services.py` | All 10 service handlers, `ServiceValidationError` cases, sensor round-trip assertions, concurrent write edge cases |
+| `tests/test_services.py` | All 12 service handlers, reward validation/history/dispatch, `ServiceValidationError` cases, sensor round-trip assertions, concurrent write edge cases |
 
 Run tests: `pytest` from the repo root.
 
@@ -215,6 +226,7 @@ All card source files live under `frontend/src/` (i.e., `ha-pointsbot-cards/src/
 | File | Responsibility |
 |---|---|
 | `pointsbot-person-card.ts` | Main card element; registers `custom:pointsbot-person-card`; reads `hass.states` on every `hass` setter update; dispatches all writes via `hass.callService`; exposes `getConfigForm()` for the Lovelace visual editor |
+| `pointsbot-person-rewards-card.ts` | Selector card; discovers PointsBot person sensors, filters/sorts reward snapshots, and calls only the three reward services; supports visual-editor configuration and banked-only redemption feedback |
 | `collapsible-section.ts` | Reusable expand/collapse element used for base tasks, bonus tasks, and adjustments sections |
 | `adjust-points-dialog.ts` | Dialog element for the manual point adjustment form; validates amount (non-zero integer) and reason (non-empty) before calling `pointsbot.adjust_points` |
 | `types.ts` | Shared TypeScript interfaces mirroring the Phase 1 sensor attribute contract |
@@ -230,3 +242,4 @@ For full architecture rationale, data model decisions, and implementation histor
 - `~/.local/share/specs/ha-pointsbot/proposed/20260711-pointsbot-overview/feature-spec.md` — High-level architecture, phasing, rejected patterns
 - `~/.local/share/specs/ha-pointsbot/proposed/20260711-pointsbot-phase1-backend/feature-spec.md` — Phase 1 detailed spec; Section 8 (Implementation Notes) contains a per-phase record of decisions, deviations, and test results
 - `~/.local/share/specs/ha-pointsbot/proposed/20260715-pointsbot-phase2-frontend/feature-spec.md` — Phase 2 frontend spec; Section 8 covers Phase 2a–2c implementation notes, deviations, and the manual QA checklist
+- `~/.local/share/specs/ha-pointsbot/proposed/20260729-pointsbot-rewards/feature-spec.md` — Rewards implementation, banked-only semantics, and Phase 4 validation notes

@@ -349,3 +349,91 @@ run_weekly_reset:
 
     Use this for testing, to recover from a missed Monday rollover, or to manually
     advance the week during onboarding.
+
+manage_reward:
+  name: Manage Reward
+  description: >
+    Create a reward, or update an existing reward when reward_id is supplied.
+    Rewards belong to one PointsBot person profile. Names are trimmed and must be
+    non-empty; cost must be a positive whole number; icon must be an MDI icon.
+    Updating reward ownership reassigns the reward to the supplied person.
+  fields:
+    person_id:
+      name: Person ID
+      description: Existing PointsBot person profile that owns the reward.
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    reward_id:
+      name: Reward ID
+      description: Existing reward UUID to update. Omit this field to create a reward.
+      required: false
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      selector:
+        text:
+    name:
+      name: Reward Name
+      description: Non-empty display name for the reward.
+      required: true
+      example: Movie night
+      selector:
+        text:
+    cost:
+      name: Cost
+      description: Positive whole number of banked points required to redeem.
+      required: true
+      example: 100
+      selector:
+        number:
+          min: 1
+          step: 1
+          mode: box
+    icon:
+      name: Icon
+      description: MDI icon identifier.
+      required: true
+      example: mdi:movie-open
+      selector:
+        icon:
+    description:
+      name: Description
+      description: Optional plain-text description.
+      required: false
+      example: Choose the family film.
+      selector:
+        text:
+
+redeem_reward:
+  name: Redeem Reward
+  description: >
+    Redeem an enabled reward owned by the supplied person. The cost is deducted
+    only from banked total_points; weekly_points and weekly task state are unchanged.
+    The redemption is permanently recorded in history.
+  fields:
+    person_id:
+      name: Person ID
+      description: Person who owns the reward and supplies the banked points.
+      required: true
+      example: person.kyle
+      selector:
+        text:
+    reward_id:
+      name: Reward ID
+      description: UUID of the reward to redeem.
+      required: true
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      selector:
+        text:
+
+delete_reward:
+  name: Delete Reward
+  description: Permanently delete a reward definition. Historical redemption events remain.
+  fields:
+    reward_id:
+      name: Reward ID
+      description: UUID of the reward to delete.
+      required: true
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      selector:
+        text:
